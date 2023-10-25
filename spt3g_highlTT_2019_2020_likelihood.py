@@ -7,7 +7,7 @@ class SPT3GHighlTTLike():
         # Load the datasets
         self.load_dataset(dataset_file)
         # Do some pre-calculations
-        self.binning_matrix = self.load_binning_matrix()
+        self.binning_matrix = self.calculate_binning_matrix()
         self.Cinv = self.calculate_covariance_inv()
         self.sed_scaling = self.calculate_sed_scaling()
 
@@ -15,14 +15,16 @@ class SPT3GHighlTTLike():
         # Get the theory spectra from pars
         cl_tt = pars['Cls']
         # bin the theory cls to the same number of bins as the model
-        binned_cls = self.bin_theory_cls(cl_tt)
-        model_cls = self.get_model_cls(pars)
-
+        binned_cls = np.matmul(self.binning_matrix, cl_tt)
+        model_cls = binned_cls + self.get_fgmodel_cls(pars)
+        #
         # calculate the likelihood with (model - bandpowers)* Covmat_inv * (model - bandpowers)
         # bandpowers are measured as 6 columns for 9090, 90150, 90220, 150150, 150220, 220220
         # bandpowers are of shape (nbins, 6)
-        likelihood = np.dot(np.dot((bandpowers - model_cls), self.Cinv), (bandpowers - model_cls))
-        logl = -0.5 * np.log(likelihood)
+        # model_cls.shape = (nbins, 6), bandpowers.shape = (nbins, 6), d.shape (nbins, 6)
+        # Covmat_inv is of shape (nbins, nbins, 6)
+        d = model_cls - binned_cls
+        logl = -0.5*np.einsum('ik,ijl,jl', d, self.Cinv, d)
         return np.float32(logl)
 
     def bin_theory_cls(self, cls):
@@ -30,12 +32,28 @@ class SPT3GHighlTTLike():
         return self.binning_matrix @ cls 
     
     def get_model_cls(self, pars):
-        # Includes contributions from:
-        # 1. foreground tsz
-        # 2. foreground ksz
-        # 3. CIB
-        # 4. radio
-        # 5. tsz-cib cross correlation
+        """
+        Includes contributions from:
+        1. foreground tsz
+        2. foreground ksz
+        3. CIB
+        4. radio
+        5. tsz-cib cross correlation
+        pars = { cosmo params,  
+                tsz_3000_143ghz, 
+                ksz_3000, 
+                cib_poisson_3000_150ghz, 
+                beta_cib_poisson,
+                sig2_cib_poisson,
+                cib_clustered_3000_150ghz, 
+                beta_cib_clustered,
+                sig2_cib_clustered,
+                radio_3000_150ghz,
+                alpha_radio,
+                sig2_radio,
+                tsz_cib,
+            }
+        """
         fg_cls = self.tsz(pars)
         fg_cls += self.ksz(pars)
         fg_cls += self.cib(pars)
@@ -52,14 +70,12 @@ class SPT3GHighlTTLike():
         Takes the foreground params and returns the tsz from Shaw et al.
         cl = cl_tsz_template * C(tsz,3000) * theta(nu1,nu2)
         """
-        tsz = self.tsz_shaw_template * pars['tsz_3000'] * self.theta
+        tsz = self.tsz_shaw_template * pars['tsz_3000_143ghz'] * self.theta
         return tsz
     
-    def get_shaw_template(self):
-        # load the shaw template from the file in params
-        fname = self.params['tsz_shaw_template']
+    def get_shaw_template(self, fname):
         tsz_shaw_template = np.loadtxt(fname)
-        self.tsz_shaw_template = tsz_shaw_template
+        return tsz_shaw_template
 
     ################################################
     # ksz functions
@@ -121,14 +137,14 @@ class SPT3GHighlTTLike():
                 )
         return np.array(self.sed_scaling)
 
-    def modified_black_body(self, nu):
+    def modified_blackbody(self, nu, beta):
         """
         Gives the modified black body spectrum at frequency nu for the effective dust emmisivity index beta:
         eta = nu**beta * B(nu)
         """
-        return nu**self.beta * self.black_body(nu)
+        return nu**beta * self.blackbody(nu)
 
-    def black_body(self, nu, T=2.726):    
+    def blackbody(self, nu, T=2.726):    
         """
         Gives the black body spectrum at the CMB temperature:
         B(nu) = 
@@ -138,7 +154,7 @@ class SPT3GHighlTTLike():
 
     def get_cib_clustered_template(self):
         # load the cib template from the file in params
-        fname = self.params['cib_template']
+        fname = self.params['cib_clustered_template']
         cib_template = np.loadtxt(fname)
         return cib_template
     
@@ -157,8 +173,8 @@ class SPT3GHighlTTLike():
         The radio contribution computed from the De Zotti model
         cl = C(radio,3000) * theta(nu1,nu2) * (eta_a * eta_b / eta_0)**alpha_r * ( l / 3000)**2
         """
-        radio = pars['radio_3000'] * theta * self.sed_scaling**pars['alpha_radio'] * (self.l / 3000)**2
-        return radio
+        cl = pars['radio_3000'] * theta * self.sed_scaling**pars['alpha_radio'] * (self.l / 3000)**2
+        return cl
 
     ####################################################
     # tsz-cib cross correlation
@@ -169,7 +185,7 @@ class SPT3GHighlTTLike():
         cl = -xi * ( sqrt( cl_tsz(nu1, nu1) * cl_cib(nu2, nu2) ) - sqrt( cl_tsz(nu2, nu2) * cl_cib(nu1, nu1) )) )
         """
         cl = pars['xi'] * (np.sqrt( self.tsz(pars) * self.cib(pars) ) - np.sqrt(self.cib(pars)))
-        return
+        return cl
 
     ####################################################
     # Some helper functions for file io 
@@ -192,7 +208,8 @@ class SPT3GHighlTTLike():
         Loads the datasets for the SPT3G highl TT likelihood with proper error handling
         """
         try:
-            self.tsz_shaw_template = get_shaw_template()
+            fname = self.params['shaw_template']
+            self.tsz_shaw_template = get_shaw_template(fname)
         except: 
             raise Exception('tsz template not found')
 
