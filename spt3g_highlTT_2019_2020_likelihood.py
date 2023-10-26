@@ -9,12 +9,14 @@ class SPT3GHighlTTLike():
         # Do some pre-calculations
         self.binning_matrix = self.calculate_binning_matrix()
         self.Cinv = self.calculate_covariance_inv()
-        self.sed_scaling = self.calculate_sed_scaling()
+        # Calculate the scaling factors
+        self.gamma = self.calculate_gamma()
+        self.theta = self.calculate_theta()
 
     def log_like(self, pars):
         # Get the theory spectra from pars
         cl_tt = pars['Cls']
-        # bin the theory cls to the same number of bins as the model
+        # bin the theory cls to the same number of bins as the bandpowers
         binned_cls = np.matmul(self.binning_matrix, cl_tt)
         model_cls = binned_cls + self.get_fgmodel_cls(pars)
         #
@@ -39,7 +41,7 @@ class SPT3GHighlTTLike():
         3. CIB
         4. radio
         5. tsz-cib cross correlation
-        pars = { cosmo params,  
+        pars = { cosmo params, Cls,  
                 tsz_3000_143ghz, 
                 ksz_3000, 
                 cib_poisson_3000_150ghz, 
@@ -51,7 +53,7 @@ class SPT3GHighlTTLike():
                 radio_3000_150ghz,
                 alpha_radio,
                 sig2_radio,
-                tsz_cib,
+                xi_tsz_cib,
             }
         """
         fg_cls = self.tsz(pars)
@@ -77,6 +79,27 @@ class SPT3GHighlTTLike():
         tsz_shaw_template = np.loadtxt(fname)
         return tsz_shaw_template
 
+    def get_effective_freqs(self):
+        """
+        Gets the effective frequencies from the file mentioned in the params file
+        """
+        eff_freqs = np.loadtxt(self.params['effective_freqs'])
+        return eff_freqs
+
+    def calculate_gamma(self):
+        """
+        Calculates the scaling function that converts the tSZ signal expected from teh Rayleigh-Jeans limit to thermodynamic units
+        """
+        for i,nu1 in enumerate(self.eff_freqs):
+            for nu2 in self.eff_freqs[i:]:
+               theta.append( self.f_tsz(nu1) * self.f_tsz(nu2)/ self.f_tsz(nu0)**2 )
+        return np.array(theta)
+
+    def f_tsz(self, nu1):
+        x_nu = nu / T
+        f = x_nu * ( ( np.exp(x_nu) + 1 )/ (np.exp(x_nu) - 1 ) ) - 4
+        return f
+
     ################################################
     # ksz functions
     ################################################
@@ -99,7 +122,7 @@ class SPT3GHighlTTLike():
     #################################################
     def cib(self, pars):
         """
-        The CIB contribution comes from a Poisson componenet and a Clustered component
+        The CIB contribution comes from a Poisson component and a Clustered component
         """
         cib = self.cib_poisson(pars) + self.cib_clustered(pars)
         return cib
@@ -107,7 +130,7 @@ class SPT3GHighlTTLike():
     def cib_poisson(self, pars):
         """
         Gives the Poisson CIB component
-        cl = C(cib,3000) * theta(nu1,nu2) * (eta_a * eta_b / eta_0**2) * ( l / 3000)**(n)
+        cl = C(cib,3000) * gamma(nu1,nu2) * (eta_a * eta_b / eta_0**2) * ( l / 3000)**(n)
         """
         cib_poisson = self.cib_poisson_template * pars['cib_poisson_3000'] * theta
         return cib_poisson
@@ -126,16 +149,14 @@ class SPT3GHighlTTLike():
         cib_clustered = pars['cib_clustered_3000'] * theta * self.sed_scaling * (self.l / 3000)**(2 - pars['cib_clustered_n'])
         return cib_clustered
 
-    def calculate_sed(self):
+    def calculate_gamma(self):
         """
-        Calculates the SED scaling factor = eta_a * eta_b / eta_0
+        Calculates the scaling factor that converts the CIB signal to Thermodynamic units
         """
-        for i,bc1 in enumerate(self.params['bandcenters']):
-            for bc2 in self.params['bandcenters'][i+1:]:
-                self.sed_scaling.append(
-                    self.modified_black_body(bc1) * self.modified_black_body(bc2) / self.modified_black_body()
-                )
-        return np.array(self.sed_scaling)
+        for i,nu1 in enumerate(self.params['bandcenters']):
+            for nu2 in self.params['bandcenters'][i+1:]:
+                gamma.append( self.modified_black_body(nu1) * self.modified_black_body(nu2) )
+        return np.array(gamma)
 
     def modified_blackbody(self, nu, beta):
         """
@@ -144,12 +165,14 @@ class SPT3GHighlTTLike():
         """
         return nu**beta * self.blackbody(nu)
 
-    def blackbody(self, nu, T=2.726):    
+    def blackbody(self, nu, nu0 = 150, T=2.726):    
         """
-        Gives the black body spectrum at the CMB temperature:
-        B(nu) = 
+        Gives the normalized black body spectrum at frequency nu for black body temperature T
+        such that it is 1 at nu0
+        B(nu) = nu**3 * exp(nu / T) 
         """
         B = nu**3 * np.exp(nu / T)
+        B /= nu0**3 * np.exp(nu0 / T)
         return B
 
     def get_cib_clustered_template(self):
@@ -227,4 +250,16 @@ class SPT3GHighlTTLike():
             self.ksz_template = get_ksz_template()
         except:
             raise Exception('ksz template not found')
+    
+    def calculate_theta(self):
+        """
+        Calculates the scaling function that converts the tSZ signal expected from teh Rayleigh-Jeans limit to thermodynamic units
+        """
 
+        return 
+    
+    def calculate_gamma(self):
+        """
+        Calculates the scaling function that converts the antenna signal to thermodynamic units
+        """
+        return
