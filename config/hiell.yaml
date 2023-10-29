@@ -1,43 +1,19 @@
 # This is an example data set to showcase the expected structure.
-# The data here is based on Etienne Camphuis's v12 Winter 19/20 TT/TE/EE covariance
 
 # BASE INFORMATION
-name: "Hiell SPT-3G 2019/2020" # this is a fairly informal identifier that is not really accessed in the code
-base_path: "mock_data/hiell_2023/" # path of the data set directory relative to the SPT3G_JAX_likelihood/ directory
+# This block contains basic information about bandpowers
+band_power_file: "bandpowers/bbandpowers.txt" # Band power file name
+covariance_file: "bandpowers/cov.bin" # Band power covariance file name
+window_functions_file: "bandpowers/windowfunc.bin" # Window folder
+effective_frequencies: "bandpowers/effective_frequencies.yaml" # Effective frequencies yaml file
 
-# FEEDBACK
-#feedback: True # Request feedback
-#log_file: "example_log.log" # Write to the following file (placed in folder of likelihood code)
+# Template
+# This block contains information about the template used in the likelihood
+tsz_template: 'templates/dl_shaw_tsz_s10_153ghz_norm1_fake25000.txt'
 
-# KEY FILES
-# These file locations are all relative to the base_path above
-# The contents of the files is expected to match the specification in spectra_info below and be consistent across files
-# For window functions a series of .txt files with names includuing the spectrum indentifier (keys in the spectra_info
-# block) followed by _window_functions.txt. The format within each file is a (N_ell X N_bins+1) array where the first
-# column gives the ell values.
-band_power_file: "bandpowers.txt" # Band power file name
-covariance_file: "cov.bin" # Band power covariance file name
-window_functions_file: "windowfunc.bin" # Window folder
-effective_frequencies: "effective_frequencies.yaml" # Effective frequencies yaml file
 
+#
 # DATA SELECTION
-# If you want to crop the data, i.e. only use a subset, this is what you need to modify
-# Acceptable inputs include:
-# - A boolean list of which bins to use
-# - A string hint
-# - A list of string hints (check documentation of generate_crop_mask() in SPT3G_JAX_likelihood.py for details)
-# For string hints, the intended format is: "(data) (action)", where "(data)" specifies which part of the data is
-# selected and "(action)" declares what to do with this selection.
-# Understood options for "(data)" are:
-# - spectrum types, e.g. "TT"
-# - frequencies and frequency combinations, e.g. "90" or "150x220"
-# - ell range, e.g. "ell<650" or "ell>1500"
-# Understood options for "(action)" are:
-# - "cut" remove this part
-# - "only" only keep this part, removing all the rest
-#data_selection: "TT only"# Use only TT spectra
-
-# DATA INFORMATION
 # This list specifies the order of spectra along with the number of bins. This block gets used to extract a plethora of
 # information about the data set (order, spec typres, frequencies, indices of spectra in a concatenated vector, ...),
 # hence describing the data set accurately here is important.

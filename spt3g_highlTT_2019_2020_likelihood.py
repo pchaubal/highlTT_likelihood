@@ -5,13 +5,10 @@ class SPT3GHighlTTLike():
     def __init__(self, dataset_file):
         self.params = self.load_params(dataset_file)
         # Load the datasets
-        self.load_dataset(dataset_file)
+        self.load_datasets()
         # Do some pre-calculations
-        self.binning_matrix = self.calculate_binning_matrix()
-        self.Cinv = self.calculate_covariance_inv()
-        # Calculate the scaling factors
-        self.gamma = self.calculate_gamma()
-        self.theta = self.calculate_theta()
+        # self.binning_matrix = self.calculate_binning_matrix()
+        # self.Cinv = self.calculate_covariance_inv()
 
     def log_like(self, pars):
         # Get the theory spectra from pars
@@ -33,7 +30,7 @@ class SPT3GHighlTTLike():
         # bin the theory cls to the same number of bins as the model
         return self.binning_matrix @ cls 
     
-    def get_model_cls(self, pars):
+    def get_fgmodel_cls(self, pars):
         """
         Includes contributions from:
         1. foreground tsz
@@ -46,14 +43,11 @@ class SPT3GHighlTTLike():
                 ksz_3000, 
                 cib_poisson_3000_150ghz, 
                 beta_cib_poisson,
-                sig2_cib_poisson,
                 cib_clustered_3000_150ghz, 
                 beta_cib_clustered,
-                sig2_cib_clustered,
                 radio_3000_150ghz,
                 alpha_radio,
-                sig2_radio,
-                xi_tsz_cib,
+                amp_tsz_cib,
             }
         """
         fg_cls = self.tsz(pars)
@@ -72,31 +66,31 @@ class SPT3GHighlTTLike():
         Takes the foreground params and returns the tsz from Shaw et al.
         cl = cl_tsz_template * C(tsz,3000) * theta(nu1,nu2)
         """
-        tsz = self.tsz_shaw_template * pars['tsz_3000_143ghz'] * self.theta
+        tsz = self.tsz_shaw_template * pars['tsz_3000_143ghz'] * self.tsz_scaling()[:, None]
         return tsz
     
-    def get_shaw_template(self, fname):
-        tsz_shaw_template = np.loadtxt(fname)
+    def get_tsz_template(self, fname):
+        """
+        Loads the tsz template from the file in params and cuts it l=13k
+        """
+        tsz_shaw_template = np.loadtxt(fname)[:13000, 1]
         return tsz_shaw_template
 
-    def get_effective_freqs(self):
-        """
-        Gets the effective frequencies from the file mentioned in the params file
-        """
-        eff_freqs = np.loadtxt(self.params['effective_freqs'])
-        return eff_freqs
 
-    def calculate_gamma(self):
+    def tsz_scaling(self):
         """
         Calculates the scaling function that converts the tSZ signal expected from teh Rayleigh-Jeans limit to thermodynamic units
+        The base frequency is taken for the Shaw template
         """
-        for i,nu1 in enumerate(self.eff_freqs):
-            for nu2 in self.eff_freqs[i:]:
-               theta.append( self.f_tsz(nu1) * self.f_tsz(nu2)/ self.f_tsz(nu0)**2 )
-        return np.array(theta)
+        freqs = list( self.eff_freqs['tSZ'].values() )
+        gamma = []
+        for i,nu1 in enumerate(freqs):
+            for nu2 in freqs[i:]:
+               gamma.append( self.f_tsz(nu1) * self.f_tsz(nu2)/ self.f_tsz(153.0)**2 )
+        return np.array(gamma)
 
-    def f_tsz(self, nu1):
-        x_nu = nu / T
+    def f_tsz(self, nu):
+        x_nu = nu / 56.78
         f = x_nu * ( ( np.exp(x_nu) + 1 )/ (np.exp(x_nu) - 1 ) ) - 4
         return f
 
@@ -132,7 +126,7 @@ class SPT3GHighlTTLike():
         Gives the Poisson CIB component
         cl = C(cib,3000) * gamma(nu1,nu2) * (eta_a * eta_b / eta_0**2) * ( l / 3000)**(n)
         """
-        cib_poisson = self.cib_poisson_template * pars['cib_poisson_3000'] * theta
+        cib_poisson = self.cib_poisson_template * pars['cib_poisson_3000'] * self.modBB_scaling( pars['beta_cib_poisson'] )
         return cib_poisson
 
     def cib_clustered(self, pars):
@@ -143,19 +137,20 @@ class SPT3GHighlTTLike():
         cl = C(cib,3000) * theta(nu1,nu2) * (eta_a * eta_b / eta_0) * ( l / 3000)**(2 - n)
 
         with C(cib,3000) and n as free parameters.
-        The SED, described by (eta_a * eta_b/ eta_0) is described by a modified black body spectrum. 
         It is precalculated at initialization for each of the 6 frequency combinations.
         """
-        cib_clustered = pars['cib_clustered_3000'] * theta * self.sed_scaling * (self.l / 3000)**(2 - pars['cib_clustered_n'])
+        modBB_fac = self.modBB_scaling( pars['beta_cib_clustered'] ) 
+        cib_clustered = pars['cib_clustered_1h_3000'] * modBB_fac * self.cib_1_halo_150ghz
+        cib_clustered += pars['cib_clustered_2h_3000'] * modBB_fac * self.cib_2_halo_150ghz
         return cib_clustered
 
-    def calculate_gamma(self):
+    def modBB_scaling(self, beta):
         """
         Calculates the scaling factor that converts the CIB signal to Thermodynamic units
         """
         for i,nu1 in enumerate(self.params['bandcenters']):
             for nu2 in self.params['bandcenters'][i+1:]:
-                gamma.append( self.modified_black_body(nu1) * self.modified_black_body(nu2) )
+                gamma.append( self.modified_black_body(nu1, beta) * self.modified_black_body(nu2, beta)  )
         return np.array(gamma)
 
     def modified_blackbody(self, nu, beta):
@@ -165,14 +160,16 @@ class SPT3GHighlTTLike():
         """
         return nu**beta * self.blackbody(nu)
 
-    def blackbody(self, nu, nu0 = 150, T=2.726):    
+    def B(self, nu, nu0 = 150, T=2.726):    
         """
         Gives the normalized black body spectrum at frequency nu for black body temperature T
         such that it is 1 at nu0
         B(nu) = nu**3 * exp(nu / T) 
+        h/k = 6.62607015e-34 J/Hz /  1.380649e-23 J/K = 4.7992430e-2 K/GHz 
         """
-        B = nu**3 * np.exp(nu / T)
-        B /= nu0**3 * np.exp(nu0 / T)
+        hk = 4.7992430e-2
+        B = (nu/nu0)**3
+        B *= np.exp( hk*nu0/T ) / np.exp(hk*nu/T)
         return B
 
     def get_cib_clustered_template(self):
@@ -202,13 +199,19 @@ class SPT3GHighlTTLike():
     ####################################################
     # tsz-cib cross correlation
     ####################################################
-    def tsz_cib(self, pars):
+    def tsz_cross_cib(self, pars):
         """
-        Adds a component for the cross-correlation between tsz and cib
-        cl = -xi * ( sqrt( cl_tsz(nu1, nu1) * cl_cib(nu2, nu2) ) - sqrt( cl_tsz(nu2, nu2) * cl_cib(nu1, nu1) )) )
+        Adds a component for the cross-correlation between tsz and cib according to the Shang model
+        cl = -0.0703 * (l/3000)**2 + 0.612*(l/3000) + 0.458
         """
-        cl = pars['xi'] * (np.sqrt( self.tsz(pars) * self.cib(pars) ) - np.sqrt(self.cib(pars)))
+        cl = pars['amp_tsz_cib'] * ( -0.0703 * (self.l / 3000)**2 + 0.612*(self.l / 3000) + 0.458 )
         return cl
+
+    ####################################################
+    # Galactic Cirrus Contribution
+    ####################################################
+    def cirrus(self, pars):
+        frqdep = ( (nu1*nu2)/(nu0**2) ) ** pars['beta_cirrus']
 
     ####################################################
     # Some helper functions for file io 
@@ -230,36 +233,43 @@ class SPT3GHighlTTLike():
         """
         Loads the datasets for the SPT3G highl TT likelihood with proper error handling
         """
+
         try:
-            fname = self.params['shaw_template']
-            self.tsz_shaw_template = get_shaw_template(fname)
+            self.eff_freqs = self.get_effective_freqs()
+        except:
+            raise Exception(f'Effective frequencies not found at {self.params["effective_frequencies"]}')
+
+        try:
+            fname = self.params['tsz_template']
+            self.tsz_template = self.get_tsz_template(fname)
         except: 
-            raise Exception('tsz template not found')
+            raise Exception(f'tsz template not found at {fname}')
 
-        try:
-            self.cib_clustered_template = get_cib_clustered_template()
-        except:
-            raise Exception('cib template not found')
-
-        try:    
-            self.cib_poisson_template = get_cib_poisson_template()
-        except:    
-            raise Exception('cib poisson template not found')
-        
-        try:
-            self.ksz_template = get_ksz_template()
-        except:
-            raise Exception('ksz template not found')
+        # try:
+        #     self.cib_clustered_template = get_cib_clustered_template()
+        # except:
+        #     raise Exception('cib template not found')
+        #
+        # try:    
+        #     self.cib_poisson_template = get_cib_poisson_template()
+        # except:    
+        #     raise Exception('cib poisson template not found')
+        # 
+        # try:
+        #     self.ksz_template = get_ksz_template()
+        # except:
+        #     raise Exception('ksz template not found')
+        #
     
-    def calculate_theta(self):
-        """
-        Calculates the scaling function that converts the tSZ signal expected from teh Rayleigh-Jeans limit to thermodynamic units
-        """
 
-        return 
-    
-    def calculate_gamma(self):
+    def get_effective_freqs(self):
         """
-        Calculates the scaling function that converts the antenna signal to thermodynamic units
+        Gets the effective frequencies from the yaml file mentioned in the params file
         """
-        return
+        eff_freqs = yaml.safe_load(open(self.params['effective_frequencies']))
+        return eff_freqs
+
+
+if __name__ == '__main__':
+    likelihood = SPT3GHighlTTLike('config/hiell.yaml')
+    likelihood.tsz_scaling()
