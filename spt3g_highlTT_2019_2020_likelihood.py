@@ -53,11 +53,11 @@ class SPT3GHighlTTLike():
                 amp_tsz_cib,
             }
         """
-        fg_cls = self.tsz(pars)
-        fg_cls += self.ksz(pars)
-        fg_cls += self.cib(pars)
+        tsz = self.tsz(pars)
+        cib = self.cib(pars)
+        fg_cls = self.ksz(pars)
         fg_cls += self.radio(pars)
-        fg_cls += self.tsz_cib(pars)
+        fg_cls += self.tsz_cib(pars, tsz, cib)
         binned_fg_cls = self.binning_matrix @ fg_cls
         return binned_fg_cls
 
@@ -237,12 +237,15 @@ class SPT3GHighlTTLike():
     ####################################################
     # tsz-cib cross correlation
     ####################################################
-    def tsz_cross_cib(self, pars):
+    def tsz_cross_cib(self, pars, tsz, cib):
         """
         Adds a component for the cross-correlation between tsz and cib according to the Shang model
         cl = -0.0703 * (l/3000)**2 + 0.612*(l/3000) + 0.458
         """
         cl = pars['amp_tsz_cib'] * ( -0.0703 * (self.l / 3000)**2 + 0.612*(self.l / 3000) + 0.458 )
+        for i in range(3):
+            for j in range(i,3):  
+                cross[i+j] = cl * ( np.sqrt(self.tsz[i]*self.cib[j] + self.tsz[j]*self.cib[i]) )
         return cl
 
     ####################################################
