@@ -10,8 +10,9 @@ class SPT3GHighlTTLike():
         self.tsz_theta = self.tsz_scaling()
         self.cibp_theta = self.cibp_scaling()
         self.cibp_pow = self.cibp_powerlaw_scaling()
-        self.theta2 = self.calculate_radio_freq_scaling()
-        self.theta3 = self.radio_powerlaw_scaling()
+        self.cibc_theta = self.cibc_scaling()
+        self.radio_theta = self.radio_freq_scaling()
+        self.radio_pow = self.radio_powerlaw_scaling()
         self.l_3000 = np.arange(1,13001) / 3000.
         self.l_3000_sq = self.l_3000**2
         # self.binning_matrix = self.calculate_binning_matrix()
@@ -37,7 +38,7 @@ class SPT3GHighlTTLike():
         # bin the theory cls to the same number of bins as the model
         return self.binning_matrix @ cls 
     
-    @profile
+    
     def get_fgmodel_cls(self, pars):
         """
         Includes contributions from:
@@ -64,7 +65,6 @@ class SPT3GHighlTTLike():
         radio = self.radio(pars)
         tsz_cib = self.tsz_cib(pars, tsz, cib)
         ###
-        print(tsz.shape, ksz.shape, cib.shape, radio.shape, tsz_cib.shape)
         # Debuging plots
         # import matplotlib.pyplot as plt
         # # make a plot with 6 subplots
@@ -127,7 +127,7 @@ class SPT3GHighlTTLike():
         Takes the foreground params and returns the ksz from Shaw et al.
         cl = cl_ksz_template * C(ksz,3000) * theta(nu1,nu2)
         """
-        ksz = self.ksz_template * pars['ksz_3000'] * self.tsz_theta[:,None]
+        ksz = self.ksz_template * pars['ksz_3000']
         return ksz
     
     def get_ksz_template(self):
@@ -139,7 +139,7 @@ class SPT3GHighlTTLike():
     #################################################
     # CIB functions
     #################################################
-    @profile
+    
     def cib(self, pars):
         """
         The CIB contribution comes from a Poisson component and a Clustered component
@@ -147,7 +147,7 @@ class SPT3GHighlTTLike():
         cib = self.cib_poisson(pars) + self.cib_clustered(pars)
         return cib
     
-    @profile
+    
     def cib_poisson(self, pars):
         """
         Gives the Poisson CIB component
@@ -166,7 +166,8 @@ class SPT3GHighlTTLike():
         theta = []
         for i,nu1 in enumerate(freqs):
             for nu2 in freqs[i:]:
-                th = (self.B(nu1) * self.B(nu2) / self.B(150.)**2) * (self.dBdT(nu2)/self.dBdT(nu1))
+                th = (self.B(nu1) * self.B(nu2) / self.B(150.)**2) 
+                th *= self.dBdT(nu2) / self.dBdT(nu1) 
                 theta.append( th )
         return np.array(theta)
 
@@ -182,20 +183,34 @@ class SPT3GHighlTTLike():
                 theta.append( nu1 * nu2 / nu0**2 )
         return np.array(theta)
 
-    @profile
+    
     def cib_clustered(self, pars):
         """
         The model is:
 
         cl = C(cib,3000) * template * ( nu1 * nu2 / nu0**2 )**alpha**2 * Bnu(nu_1) * Bnu(nu_2) / Bnu(nu_0)**2 * dBdT(nu2)/dBdT(nu1)
 
-        with C(cib,3000) as free parameters.
+        with the amplitude C(cib,3000) as free parameter.
 
         """
-        freq_scalign = np.ones(6)
-        cib_clustered = pars['cib_clustered_1halo'] * freq_scalign[:, None] * self.cib_1h
-        cib_clustered += pars['cib_clustered_2halo'] * freq_scalign[:, None] * self.cib_2h
+        freq_scaling = self.cibp_pow**pars['beta_cib_clustered'] * self.cibc_theta
+        cib_clustered = pars['cib_clustered_1halo'] * freq_scaling[:,None] * self.cib_1h
+        cib_clustered += pars['cib_clustered_2halo'] * freq_scaling[:,None] * self.cib_2h
         return cib_clustered
+
+    def cibc_scaling(self):
+        """
+        Calculates the frequency scaling factor for CIB Clustered terms:
+        theta3(nu1,nu2, nu0) = ( Bnu(nu1) * Bnu(nu2) / Bnu(nu0)**2 ) * ( dB/dT(nu2, nu0) / dB/dT(nu1, nu0) )
+        """
+        freqs = list( self.eff_freqs['CIB'].values() )
+        theta = []
+        for i,nu1 in enumerate(freqs):
+            for nu2 in freqs[i:]:
+                th = (self.B(nu1) * self.B(nu2) / self.B(150.)**2) 
+                th *= self.dBdT(nu2) / self.dBdT(nu1) 
+                theta.append( th )
+        return np.array(theta)
 
     # def modBB_scaling(self, beta):
     #     """
@@ -242,10 +257,10 @@ class SPT3GHighlTTLike():
         Dl = rg_poisson * ( dB/dT(nu2, nu0) / dB/dT(nu1, nu0) ) * (nu1 * nu2/nu0**2)**(alpha_r) * ( l / 3000)**2
         Dl = rg_poisson * ( dB/dT(nu2, nu0) / dB/dT(nu1, nu0) ) * (nu1 * nu2/nu0**2)**(alpha_r + log(nu1*nu2/nu0**2)/2  ) * ( l / 3000)**2
         """
-        dl = pars['radio_3000_150ghz'] * (self.theta2 * self.theta3**pars['alpha_radio'])[:,None] * self.l_3000_sq
+        dl = pars['radio_3000_150ghz'] * (self.radio_theta * self.radio_pow**pars['alpha_radio'])[:,None] * self.l_3000_sq
         return dl
 
-    def calculate_radio_freq_scaling(self):
+    def radio_freq_scaling(self):
         """
         Calculates the scaling factor
         """
@@ -280,7 +295,7 @@ class SPT3GHighlTTLike():
     ####################################################
     # tsz-cib cross correlation
     ####################################################
-    @profile
+    
     def tsz_cib(self, pars, tsz, cib):
         """
         Adds a component for the cross-correlation between tsz and cib according to the Shang model
@@ -288,8 +303,9 @@ class SPT3GHighlTTLike():
         """
         cl = pars['amp_tsz_cib'] * ( -0.0703 * self.l_3000_sq + 0.612*self.l_3000 + 0.458 )
         cross = []
-        for i in range(3):
-            for j in range(i,3):  
+        inds = [0,3,5]
+        for i_, i in enumerate(inds):
+            for j in inds[i_:]:  
                 cross_ = cl * ( np.sqrt(tsz[i,:]*cib[j,:] + tsz[j,:]*cib[i,:]) )
                 cross.append(cross_)
         return np.asarray(cross)
@@ -340,11 +356,7 @@ class SPT3GHighlTTLike():
         try:
             self.cib_1h, self.cib_2h = self.get_cib_clustered_template()
         except:
-            raise Exception('cib template not found at {self.params["cib_clustered_template"]}')
-
-
-
-    
+            raise Exception('cib 1halo or 2halo template not found')
 
     def get_effective_freqs(self):
         """
@@ -371,4 +383,5 @@ if __name__ == '__main__':
             }
     # pars['Cls'] = np.loadtxt('cl_tt.txt')
     pars['Cls'] = np.arange(13000)
-    likelihood.get_fgmodel_cls(pars)
+    for i in range(1000_000):
+        likelihood.get_fgmodel_cls(pars)
