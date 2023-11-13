@@ -5,4 +5,6 @@ There is a demo file worked out in the highlTT_demo.py which outlines how to use
 
 The actual likelihood code lives in spt3g_highlTT_2019_2020_likelihood.py
 
+![Foreground Model](./foregrounds.png)
+
 More coming soon
